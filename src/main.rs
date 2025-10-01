@@ -1,14 +1,9 @@
-use shuttle_axum::axum::{routing::get, Router, response::IntoResponse};
-use serde_json::{json, Value};
-use std::env;
-use std::fs::{self, File, read_to_string};
-use std::io::Write;
-use std::path::Path;
+use axum::{routing::get, Router};
+use shuttle_runtime::{tracing, SecretStore}; // 修正 1：正确引入 tracing
+use std::net::SocketAddr;                     // 修正 2：正确引入 SocketAddr
 use std::process::Command;
-use tokio::time::{sleep, Duration};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use shuttle_runtime::SecretStore;
 
 // 主处理函数，返回 Axum 路由
 #[shuttle_runtime::main]
@@ -41,13 +36,13 @@ async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_axum:
     }}
     "#, xray_port, uuid, sub_path, web_port);
     
-    fs::write("/tmp/config.json", xray_config).expect("Unable to write xray config file");
+    std::fs::write("/tmp/config.json", xray_config).expect("Unable to write xray config file");
 
     Command::new("/usr/bin/xray")
         .args(["run", "-c", "/tmp/config.json"])
         .spawn()
         .expect("failed to start xray");
-    shuttle_runtime::tracing::info!("Xray core started on port {}", xray_port);
+    tracing::info!("Xray core started on port {}", xray_port); // 修正 3：修正日志调用
 
     // --- 3. 启动 Cloudflare Tunnel ---
     Command::new("/usr/bin/cloudflared")
@@ -60,20 +55,18 @@ async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_axum:
         ])
         .spawn()
         .expect("failed to start cloudflared");
-    shuttle_runtime::tracing::info!("Cloudflare tunnel started, pointing to Xray on port {}", xray_port);
+    tracing::info!("Cloudflare tunnel started, pointing to Xray on port {}", xray_port); // 修正 3：修正日志调用
 
     // --- 4. 设置网页路由，用于提供订阅链接 ---
     let sub_content = generate_subscription_content(&uuid, &argo_domain);
     let router = Router::new().route(
         &format!("/{}", sub_path),
-        // VVVVVV-- 唯一的实质性修改在这里 --VVVVVV
         get(move || async { sub_content.clone() }),
-        // ^^^^^^-- 唯一的实质性修改在这里 --^^^^^^
     );
     
     // 将网页服务绑定到指定的内部端口
     let addr: SocketAddr = format!("0.0.0.0:{}", web_port).parse().unwrap();
-    shuttle_runtime::tracing::info!("Subscription web service listening on {}", addr);
+    tracing::info!("Subscription web service listening on {}", addr); // 修正 3：修正日志调用
     
     Ok(router.into())
 }
