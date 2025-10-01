@@ -1,11 +1,14 @@
-use std::net::SocketAddr;
+use shuttle_axum::axum::{routing::get, Router, response::IntoResponse};
+use serde_json::{json, Value};
+use std::env;
+use std::fs::{self, File, read_to_string};
+use std::io::Write;
+use std::path::Path;
 use std::process::Command;
-use shuttle_runtime::{SecretStore, tracing};
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Router;
+use tokio::time::{sleep, Duration};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
+use shuttle_runtime::SecretStore;
 
 // 主处理函数，返回 Axum 路由
 #[shuttle_runtime::main]
@@ -15,34 +18,36 @@ async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_axum:
     let argo_domain = secrets.get("ARGO_DOMAIN").expect("ARGO_DOMAIN must be set");
     let argo_auth = secrets.get("ARGO_AUTH").expect("ARGO_AUTH (Tunnel Token) must be set");
     let sub_path = secrets.get("SUB_PATH").unwrap_or_else(|| "sub".to_string());
+    let xray_port = "8000"; // Xray 监听的内部端口
+    let web_port = "8080";  // 网页服务监听的内部端口
 
     // --- 2. 启动 Xray 核心 ---
-    // Xray 配置现在直接在这里用代码生成，更清晰、更不容易出错
     let xray_config = format!(r#"
     {{
         "log": {{ "loglevel": "none" }},
         "inbounds": [
             {{
-                "port": 8000,
+                "port": {},
                 "listen": "127.0.0.1",
                 "protocol": "vless",
                 "settings": {{ "clients": [{{ "id": "{}" }}], "decryption": "none" }},
-                "streamSettings": {{ "network": "ws", "security": "none", "wsSettings": {{ "path": "/proxy" }} }}
+                "streamSettings": {{ "network": "ws", "security": "none", "wsSettings": {{ "path": "/proxy" }} }},
+                "fallbacks": [
+                    {{ "path": "/{}", "dest": {} }}
+                ]
             }}
         ],
         "outbounds": [{{ "protocol": "freedom" }}]
     }}
-    "#, uuid);
+    "#, xray_port, uuid, sub_path, web_port);
     
-    // 将配置写入文件
-    std::fs::write("/tmp/config.json", xray_config).expect("Unable to write xray config file");
+    fs::write("/tmp/config.json", xray_config).expect("Unable to write xray config file");
 
-    // 启动 Xray
     Command::new("/usr/bin/xray")
         .args(["run", "-c", "/tmp/config.json"])
         .spawn()
         .expect("failed to start xray");
-    tracing::info!("Xray core started");
+    shuttle_runtime::tracing::info!("Xray core started on port {}", xray_port);
 
     // --- 3. 启动 Cloudflare Tunnel ---
     Command::new("/usr/bin/cloudflared")
@@ -55,15 +60,21 @@ async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_axum:
         ])
         .spawn()
         .expect("failed to start cloudflared");
-    tracing::info!("Cloudflare tunnel started");
+    shuttle_runtime::tracing::info!("Cloudflare tunnel started, pointing to Xray on port {}", xray_port);
 
     // --- 4. 设置网页路由，用于提供订阅链接 ---
     let sub_content = generate_subscription_content(&uuid, &argo_domain);
     let router = Router::new().route(
         &format!("/{}", sub_path),
-        get(move || async { sub_content }),
+        // VVVVVV-- 唯一的实质性修改在这里 --VVVVVV
+        get(move || async { sub_content.clone() }),
+        // ^^^^^^-- 唯一的实质性修改在这里 --^^^^^^
     );
-
+    
+    // 将网页服务绑定到指定的内部端口
+    let addr: SocketAddr = format!("0.0.0.0:{}", web_port).parse().unwrap();
+    shuttle_runtime::tracing::info!("Subscription web service listening on {}", addr);
+    
     Ok(router.into())
 }
 
