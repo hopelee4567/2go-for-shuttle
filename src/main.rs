@@ -135,9 +135,9 @@ ingress:
                     ],
                     "decryption": "none",
                     "fallbacks": [
-                        // VVVVVV-- 唯一的实质性修改在这里，用以解决 404 错误 --VVVVVV
+                        // --- 修正 1: 解决 404 错误 ---
                         { "path": format!("/{}", sub_path), "dest": 8000 },
-                        // ^^^^^^-- 唯一的实质性修改在这里，用以解决 404 错误 --^^^^^^
+                        // ------------------------------
                         { "dest": 3001 },
                         { "path": "/vless-argo", "dest": 3002 },
                         { "path": "/vmess-argo", "dest": 3003 },
@@ -152,85 +152,37 @@ ingress:
                 "port": 3001,
                 "listen": "127.0.0.1",
                 "protocol": "vless",
-                "settings": {
-                    "clients": [{ "id": uuid }],
-                    "decryption": "none"
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "security": "none"
-                }
+                "settings": { "clients": [{ "id": uuid }], "decryption": "none" },
+                "streamSettings": { "network": "ws", "security": "none" }
             },
             {
                 "port": 3002,
                 "listen": "127.0.0.1",
                 "protocol": "vless",
-                "settings": {
-                    "clients": [{ "id": uuid, "level": 0 }],
-                    "decryption": "none"
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "security": "none",
-                    "wsSettings": {
-                        "path": "/vless-argo"
-                    }
-                },
-                "sniffing": {
-                    "enabled": true,
-                    "destOverride": ["http", "tls", "quic"],
-                    "metadataOnly": false
-                }
+                "settings": { "clients": [{ "id": uuid, "level": 0 }], "decryption": "none" },
+                "streamSettings": { "network": "ws", "security": "none", "wsSettings": { "path": "/vless-argo" } },
+                "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
             },
             {
                 "port": 3003,
                 "listen": "127.0.0.1",
                 "protocol": "vmess",
-                "settings": {
-                    "clients": [{ "id": uuid, "alterId": 0 }]
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "wsSettings": {
-                        "path": "/vmess-argo"
-                    }
-                },
-                "sniffing": {
-                    "enabled": true,
-                    "destOverride": ["http", "tls", "quic"],
-                    "metadataOnly": false
-                }
+                "settings": { "clients": [{ "id": uuid, "alterId": 0 }] },
+                "streamSettings": { "network": "ws", "wsSettings": { "path": "/vmess-argo" } },
+                "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
             },
             {
                 "port": 3004,
                 "listen": "127.0.0.1",
                 "protocol": "trojan",
-                "settings": {
-                    "clients": [{ "password": uuid }]
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "security": "none",
-                    "wsSettings": {
-                        "path": "/trojan-argo"
-                    }
-                },
-                "sniffing": {
-                    "enabled": true,
-                    "destOverride": ["http", "tls", "quic"],
-                    "metadataOnly": false
-                }
+                "settings": { "clients": [{ "password": uuid }] },
+                "streamSettings": { "network": "ws", "security": "none", "wsSettings": { "path": "/trojan-argo" } },
+                "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false }
             }
         ],
         "outbounds": [
-            {
-                "protocol": "freedom",
-                "tag": "direct"
-            },
-            {
-                "protocol": "blackhole",
-                "tag": "block"
-            }
+            { "protocol": "freedom", "tag": "direct" },
+            { "protocol": "blackhole", "tag": "block" }
         ]
     });
 
@@ -343,29 +295,20 @@ async fn run_services() {
     sleep(Duration::from_secs(2)).await;
 
     if Path::new(&format!("{}/bot", file_path)).exists() {
+        // --- 修正 2: 解决隧道不稳定问题 ---
         let argo_auth = env::var("ARGO_AUTH").unwrap_or_default();
-        let argo_port = env::var("ARGO_PORT").unwrap_or_default();
         
-        let boot_log_path = format!("{}/boot.log", file_path);
-        let tunnel_yml_path = format!("{}/tunnel.yml", file_path);
-        let url = format!("http://localhost:{}", argo_port);
-
-        let args = if argo_auth.len() >= 120 && argo_auth.len() <= 250 {
-            vec!["tunnel", "--edge-ip-version", "auto", "--no-autoupdate", 
-                 "--protocol", "http2", "run", "--token", &argo_auth]
-        } else if argo_auth.contains("TunnelSecret") {
-            vec!["tunnel", "--edge-ip-version", "auto", 
-                 "--config", &tunnel_yml_path, "run"]
-        } else {
-            vec!["tunnel", "--edge-ip-version", "auto", "--no-autoupdate",
-                 "--protocol", "http2", "--logfile", &boot_log_path,
-                 "--loglevel", "info", "--url", &url]
-        };
+        // 我们删除了复杂的 if/else 判断，强制使用 Token 模式
+        let args = vec![
+            "tunnel", "--edge-ip-version", "auto", "--no-autoupdate", 
+            "--protocol", "http2", "run", "--token", &argo_auth
+        ];
 
         Command::new(format!("{}/bot", file_path))
             .args(&args)
             .spawn()
-            .expect("Failed to start bot");
+            .expect("Failed to start bot with permanent token");
+        // ------------------------------------
     }
 }
 
