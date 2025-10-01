@@ -31,7 +31,7 @@ async fn create_config_files() {
     let argo_auth = env::var("ARGO_AUTH").unwrap_or_default();
     let argo_domain = env::var("ARGO_DOMAIN").unwrap_or_default();
     let sub_path = env::var("SUB_PATH").unwrap_or_else(|_| "sub".to_string());
-    
+
     if !Path::new(&file_path).exists() {
         fs::create_dir_all(&file_path).expect("Failed to create directory");
     }
@@ -135,9 +135,9 @@ ingress:
                     ],
                     "decryption": "none",
                     "fallbacks": [
-                        // VVVVVV-- 唯一的实质性修改在这里 --VVVVVV
+                        // VVVVVV-- 唯一的实质性修改在这里，用以解决 404 错误 --VVVVVV
                         { "path": format!("/{}", sub_path), "dest": 8000 },
-                        // ^^^^^^-- 唯一的实质性修改在这里 --^^^^^^
+                        // ^^^^^^-- 唯一的实质性修改在这里，用以解决 404 错误 --^^^^^^
                         { "dest": 3001 },
                         { "path": "/vless-argo", "dest": 3002 },
                         { "path": "/vmess-argo", "dest": 3003 },
@@ -251,17 +251,14 @@ async fn download_files() {
     let nezha_port = env::var("NEZHA_PORT").unwrap_or_default();
     let nezha_key = env::var("NEZHA_KEY").unwrap_or_default();
 
-    // Determine Nezha agent URL based on environment variables
     let nezha_agent_url = if !nezha_server.is_empty() && !nezha_key.is_empty() {
         if nezha_port.is_empty() {
-            // Use v1 agent if port is not specified
             match arch.as_str() {
                 "arm" | "arm64" | "aarch64" => "https://arm64.ssss.nyc.mn/v1",
                 "amd64" | "x86_64" | "x86" => "https://amd64.ssss.nyc.mn/v1",
                 _ => "",
             }
         } else {
-            // Use regular agent if port is specified
             match arch.as_str() {
                 "arm" | "arm64" | "aarch64" => "https://arm64.ssss.nyc.mn/agent",
                 "amd64" | "x86_64" | "x86" => "https://amd64.ssss.nyc.mn/agent",
@@ -312,10 +309,8 @@ async fn run_services() {
     let nezha_port = env::var("NEZHA_PORT").unwrap_or_default();
     let nezha_key = env::var("NEZHA_KEY").unwrap_or_default();
     
-    // Run Nezha agent based on version
     if !nezha_server.is_empty() && !nezha_key.is_empty() {
         if nezha_port.is_empty() {
-            // Run v1 agent (php)
             if Path::new(&format!("{}/php", file_path)).exists() {
                 Command::new(format!("{}/php", file_path))
                     .args(["-c", &format!("{}/config.yaml", file_path)])
@@ -323,7 +318,6 @@ async fn run_services() {
                     .expect("Failed to start php (Nezha v1)");
             }
         } else {
-            // Run regular agent (npm)
             if Path::new(&format!("{}/npm", file_path)).exists() {
                 let tls_ports = ["443", "8443", "2096", "2087", "2083", "2053"];
                 let nezha_tls = if tls_ports.contains(&nezha_port.as_str()) { "--tls" } else { "" };
@@ -437,7 +431,7 @@ async fn generate_links() {
     });
 
     let mut list_file = File::create(format!("{}/list.txt", file_path))
-        。expect("Failed to create list.txt");
+        .expect("Failed to create list.txt");
 
     writeln!(list_file, "vless://{}@{}:{}?encryption=none&security=tls&sni={}&fp=chrome&type=ws&host={}&path=%2Fvless-argo%3Fed%3D2560#{}-{}",
         uuid, cfip, cfport, argodomain, argodomain, name, isp).unwrap();
@@ -449,7 +443,7 @@ async fn generate_links() {
         uuid, cfip, cfport, argodomain, argodomain, name, isp).unwrap();
 
     let list_content = fs::read_to_string(format!("{}/list.txt", file_path))
-        。expect("Failed to read list.txt");
+        .expect("Failed to read list.txt");
     let sub_content = BASE64_STANDARD.encode(list_content.as_bytes());
     
     fs::write(
@@ -481,8 +475,8 @@ async fn main(#[shuttle_runtime::Secrets] secrets: SecretStore) -> shuttle_axum:
     println!("App is running!");
 
     let router = Router::new()
-        。route("/", get(hello_world))
-        。route(
+        .route("/", get(hello_world))
+        .route(
             &format!("/{}", std::env::var("SUB_PATH").unwrap_or_else(|_| "sub".to_string())),
             get(read_sub),
         );
